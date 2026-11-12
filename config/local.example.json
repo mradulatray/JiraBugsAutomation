@@ -1,0 +1,10 @@
+{
+  "jira": {
+    "baseUrl": "https://YOUR-SITE.atlassian.net",
+    "accountId": "YOUR-JIRA-ACCOUNT-ID",
+    "email": "you@naukri.com"
+  },
+  "repo": {
+    "path": "/Users/YOU/Desktop/infoedge_Project/naukri_gulf"
+  }
+}

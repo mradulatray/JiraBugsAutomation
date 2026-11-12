@@ -1,0 +1,117 @@
+{
+  "env": "local",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "bodyLimit": "1mb",
+    "allowNonLoopback": false,
+    "trustProxyHeader": "cf-connecting-ip"
+  },
+  "rateLimit": {
+    "perClient": {
+      "capacity": 20,
+      "refillPerSec": 0.2
+    },
+    "global": {
+      "capacity": 60,
+      "refillPerSec": 1
+    }
+  },
+  "paths": {
+    "home": "~/.ngauto",
+    "logs": "./logs"
+  },
+  "logging": {
+    "level": "info",
+    "stdout": true
+  },
+  "jira": {
+    "baseUrl": "",
+    "accountId": "",
+    "email": "",
+    "projects": [
+      "NGBUGS"
+    ],
+    "issueTypes": [
+      "Bug"
+    ],
+    "webhookAuth": "hmac",
+    "signatureHeader": "x-hub-signature",
+    "tokenHeader": "x-ngauto-token",
+    "maxEventAgeSec": 21600,
+    "poll": {
+      "enabled": true,
+      "intervalSec": 120,
+      "overlapMin": 5
+    },
+    "ticket": {
+      "maxComments": 15
+    }
+  },
+  "gitlab": {
+    "baseUrl": "https://gitlab.infoedge.com",
+    "projectPath": "naukrigulf/iosapp",
+    "defaultTargetBranch": "release",
+    "protectedBranches": [
+      "master",
+      "release",
+      "Release_Branch",
+      "staging",
+      "live"
+    ]
+  },
+  "repo": {
+    "path": "",
+    "appSubdir": "SwiftRevamp/NaukriGulf"
+  },
+  "agent": {
+    "enabled": true,
+    "claudePath": "~/.local/bin/claude",
+    "model": "",
+    "timeoutMin": 40,
+    "maxBudgetUsd": 10,
+    "maxFixAttempts": 2,
+    "pollSec": 15
+  },
+  "validate": {
+    "enabled": true,
+    "timeoutMin": 90,
+    "command": [
+      "xcodebuild",
+      "-workspace",
+      "NaukriGulf.xcworkspace",
+      "-scheme",
+      "NaukriGulf_Debug",
+      "-configuration",
+      "Debug",
+      "-destination",
+      "generic/platform=iOS Simulator",
+      "-derivedDataPath",
+      "{derivedData}",
+      "ARCHS=arm64",
+      "ONLY_ACTIVE_ARCH=YES",
+      "CODE_SIGNING_ALLOWED=NO",
+      "build"
+    ]
+  },
+  "secrets": {
+    "provider": "keychain",
+    "keychainService": "ngauto"
+  },
+  "launchd": {
+    "label": "com.ngauto.listener"
+  },
+  "tunnel": {
+    "provider": "ngrok",
+    "domain": "",
+    "label": "com.ngauto.tunnel"
+  },
+  "notifications": {
+    "channels": [
+      "macos"
+    ]
+  },
+  "staging": {
+    "mode": "manual"
+  }
+}

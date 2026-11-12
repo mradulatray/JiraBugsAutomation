@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ngauto portal</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e3e6ea;
+    --accent: #2f6fde; --accent-text: #ffffff;
+    --run: #2f6fde; --run-bg: #e8f0fd; --ok: #1d7a46; --ok-bg: #e5f4ec; --warn: #9a5b00; --warn-bg: #fdf1dc;
+    --bad: #b42318; --bad-bg: #fbe9e7; --idle: #5d6673; --idle-bg: #eef0f3;
+    --code-bg: #f1f3f6; --add: #e6f4ea; --del: #fbe9e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #1a1e24; --text: #e6e9ee; --muted: #9aa3ae; --line: #2a3038;
+      --accent: #5b8ff0; --accent-text: #0d1117;
+      --run: #7aa7f5; --run-bg: #1c2a42; --ok: #5cc98b; --ok-bg: #16301f; --warn: #f0b45a; --warn-bg: #3a2a10;
+      --bad: #f2877c; --bad-bg: #3d1b18; --idle: #9aa3ae; --idle-bg: #242a31;
+      --code-bg: #12161b; --add: #173222; --del: #3a1a17;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .bar { max-width: 1000px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .s-run { color: var(--run); background: var(--run-bg); } .s-ok { color: var(--ok); background: var(--ok-bg); }
+  .s-warn { color: var(--warn); background: var(--warn-bg); } .s-bad { color: var(--bad); background: var(--bad-bg); }
+  .s-idle { color: var(--idle); background: var(--idle-bg); }
+  .spacer { flex: 1; }
+  .updated { color: var(--muted); font-size: 12px; }
+  nav { max-width: 1000px; margin: 0 auto; padding: 0 16px; display: flex; gap: 4px; overflow-x: auto; }
+  nav button { border: 0; background: none; color: var(--muted); padding: 8px 12px; font: inherit; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  nav .n { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 9px; background: var(--idle-bg); font-size: 11px; text-align: center; }
+  nav .n.hot { background: var(--warn-bg); color: var(--warn); }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+  .empty { color: var(--muted); text-align: center; padding: 48px 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .top { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+  .key { font-weight: 700; color: var(--accent); text-decoration: none; }
+  .key:hover { text-decoration: underline; }
+  .jobid { color: var(--muted); font-size: 12px; }
+  .title { flex: 1 1 260px; min-width: 0; }
+  .title .t { display: block; color: var(--text); overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin: 12px 0 4px; }
+  .steps div { height: 4px; border-radius: 2px; background: var(--line); }
+  .steps div.done { background: var(--ok); } .steps div.now { background: var(--run); animation: pulse 1.4s ease-in-out infinite; }
+  .steps div.fail { background: var(--bad); }
+  .steplabels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-size: 11px; color: var(--muted); }
+  @keyframes pulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .steps div.now { animation: none; } }
+  .box { margin-top: 12px; padding: 10px 12px; border-radius: 8px; overflow-wrap: anywhere; }
+  .box h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .box.q { background: var(--warn-bg); } .box.q h3 { color: var(--warn); }
+  .box.e { background: var(--bad-bg); } .box.e h3 { color: var(--bad); }
+  .box.a { background: var(--ok-bg); } .box.a h3 { color: var(--ok); }
+  .box.p { background: var(--idle-bg); } .box.p h3 { color: var(--muted); }
+  .box p { margin: 0; white-space: pre-wrap; }
+  textarea { width: 100%; min-height: 90px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; resize: vertical; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  button.btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 6px 12px; border-radius: 7px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.btn:hover { border-color: var(--muted); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.btn.danger { color: var(--bad); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  .hint { color: var(--muted); font-size: 12px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+  .tabs2 { display: flex; gap: 6px; margin: 10px 0 8px; flex-wrap: wrap; }
+  .tabs2 button { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .tabs2 button[aria-selected="true"] { color: var(--text); border-color: var(--accent); }
+  pre { margin: 0; padding: 10px 12px; background: var(--code-bg); border-radius: 8px; overflow: auto; max-height: 460px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  pre .add { background: var(--add); display: block; } pre .del { background: var(--del); display: block; } pre .hunk { color: var(--accent); display: block; }
+  table.hist { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.hist td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+  table.hist td:first-child { color: var(--muted); white-space: nowrap; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-weight: 600; max-width: calc(100% - 32px); z-index: 5; }
+  .banner { max-width: 1000px; margin: 12px auto 0; padding: 10px 14px; border-radius: 8px; background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+  @media (max-width: 560px) { .steplabels { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>ngauto</h1>
+    <span id="svc" class="pill s-idle">Connecting…</span>
+    <span class="spacer"></span>
+    <span class="updated" id="updated"></span>
+  </div>
+  <nav role="tablist" id="tabs"></nav>
+</header>
+<div id="banner"></div>
+<main id="list"><div class="empty">Loading…</div></main>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+const LABEL = {
+  QUEUED: ['Waiting in queue', 's-idle'], FETCHING: ['Reading ticket & preparing code', 's-run'],
+  ANALYZING: ['Claude is working on the fix', 's-run'], IMPLEMENTING: ['Saving the fix', 's-run'],
+  VALIDATING: ['Building in Xcode', 's-run'], VALIDATED: ['Fix ready (compiled)', 's-ok'],
+  PUSHING: ['Pushing to GitLab', 's-run'], MR_DRAFT: ['Draft MR open', 's-ok'],
+  NEEDS_INFO: ['Needs your input', 's-warn'], VALIDATION_FAILED: ['Build failed', 's-bad'],
+  FAILED: ['Failed', 's-bad'], INTERRUPTED: ['Interrupted', 's-warn'], CANCELLED: ['Cancelled', 's-idle'],
+  MERGED: ['Merged', 's-ok'], MR_CLOSED: ['MR closed', 's-idle'], CHANGES_REQUESTED: ['Changes requested', 's-warn'],
+};
+const STEP_NAMES = ['Ticket', 'Claude fix', 'Commit', 'Xcode build', 'Ready'];
+const STEP_OF = { QUEUED: -1, FETCHING: 0, ANALYZING: 1, IMPLEMENTING: 2, VALIDATING: 3, VALIDATED: 5, PUSHING: 5, MR_DRAFT: 5, MERGED: 5 };
+const TABS = [
+  ['needs', 'Needs you', (j) => ['NEEDS_INFO', 'FAILED', 'VALIDATION_FAILED', 'INTERRUPTED', 'CHANGES_REQUESTED'].includes(j.state)],
+  ['progress', 'In progress', (j) => j.state === 'QUEUED' || j.running],
+  ['ready', 'Ready', (j) => ['VALIDATED', 'MR_DRAFT', 'MERGED'].includes(j.state)],
+  ['all', 'All', () => true],
+];
+
+let tab = safeGet('tab') || 'needs';
+let jobs = [];
+let lastJson = '';
+const drafts = {};
+const open = {};       // job id -> details open
+const detailCache = {}; // job id -> { view: 'history'|'ticket'|'diff'|'build', data }
+
+function safeGet(k) { try { return localStorage.getItem('ngauto.' + k); } catch { return null; } }
+function safeSet(k, v) { try { localStorage.setItem('ngauto.' + k, v); } catch {} }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return new Date(iso).toLocaleDateString();
+}
+function toast(msg) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3500);
+}
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-ngauto-ui': '1' }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+  return data;
+}
+
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = TABS.map(([id, name, f]) => {
+    const n = jobs.filter(f).length;
+    return `<button role="tab" data-tab="${id}" aria-selected="${tab === id}">${name}<span class="n ${id === 'needs' && n ? 'hot' : ''}">${n}</span></button>`;
+  }).join('');
+}
+
+function steps(j) {
+  const cur = STEP_OF[j.state];
+  const failed = ['FAILED', 'VALIDATION_FAILED', 'NEEDS_INFO', 'INTERRUPTED'].includes(j.state);
+  const failAt = j.state === 'VALIDATION_FAILED' ? 3 : 1;
+  const bars = STEP_NAMES.map((_, i) => {
+    let c = '';
+    if (failed) c = i < failAt ? 'done' : i === failAt ? 'fail' : '';
+    else if (cur !== undefined) c = i < cur ? 'done' : i === cur ? 'now' : '';
+    return `<div class="${c}"></div>`;
+  }).join('');
+  return `<div class="steps" aria-hidden="true">${bars}</div><div class="steplabels">${STEP_NAMES.map((n) => `<span>${n}</span>`).join('')}</div>`;
+}
+
+function card(j) {
+  const [label, cls] = LABEL[j.state] || [j.state, 's-idle'];
+  const a = j.agent;
+  let body = '';
+  if (j.state === 'NEEDS_INFO') {
+    body += `<div class="box q"><h3>Claude's question</h3><p>${esc(j.info)}</p></div>`;
+  } else if (['FAILED', 'VALIDATION_FAILED', 'INTERRUPTED'].includes(j.state) && j.info) {
+    body += `<div class="box e"><h3>What went wrong</h3><p>${esc(j.info)}</p></div>`;
+  }
+  if (a && a.status === 'fixed') {
+    const prev = j.running || j.state === 'QUEUED';
+    body += `<div class="box ${prev ? 'p' : 'a'}"><h3>${prev ? 'Previous attempt' : 'What Claude changed'}</h3><p><b>${esc(a.summary)}</b>${a.details ? '\n' + esc(a.details) : ''}</p></div>`;
+  }
+  if (j.canAnswer) {
+    const ph = j.state === 'NEEDS_INFO' ? 'Type the answer (steps, screen, device, decision)…' : 'Optional: add instructions or more details for Claude…';
+    body += `<textarea data-draft="${j.id}" placeholder="${ph}" aria-label="Answer for ${esc(j.key)}">${esc(drafts[j.id] || '')}</textarea>
+      <div class="actions">
+        <button class="btn primary" data-act="answer" data-id="${j.id}">Send to Jira &amp; retry</button>
+        <button class="btn" data-act="retry" data-id="${j.id}">Retry without comment</button>
+        ${j.canCancel ? `<button class="btn danger" data-act="cancel" data-id="${j.id}">Cancel</button>` : ''}
+        <span class="hint">Your text is posted as a Jira comment; Claude re-reads the ticket.</span>
+      </div>`;
+  } else if (j.canCancel) {
+    body += `<div class="actions"><button class="btn danger" data-act="cancel" data-id="${j.id}">Cancel</button></div>`;
+  }
+  return `<article class="card" data-card="${j.id}">
+    <div class="top">
+      <div class="title">
+        <a class="key" href="${esc(j.jiraUrl || '#')}" target="_blank" rel="noopener noreferrer">${esc(j.key)}</a>
+        <span class="jobid">job #${j.id}</span>
+        <span class="t">${esc(j.title || '')}</span>
+        <div class="meta">${j.branch ? esc(j.branch) + ' → ' + esc(j.target) + ' · ' : ''}updated ${ago(j.updatedAt)}${j.attempts > 1 ? ' · attempt ' + j.attempts : ''}</div>
+      </div>
+      <span class="pill ${cls}">${label}</span>
+    </div>
+    ${STEP_OF[j.state] !== undefined || ['FAILED', 'VALIDATION_FAILED', 'NEEDS_INFO', 'INTERRUPTED'].includes(j.state) ? steps(j) : ''}
+    ${body}
+    <details data-details="${j.id}" ${open[j.id] ? 'open' : ''}>
+      <summary>Details</summary>
+      <div class="tabs2">
+        ${['history', 'ticket', 'diff', 'build'].map((v) => `<button data-view="${v}" data-id="${j.id}" aria-selected="${(detailCache[j.id]?.view || 'history') === v}">${{ history: 'History', ticket: 'Ticket', diff: 'Code change', build: 'Build log' }[v]}</button>`).join('')}
+      </div>
+      <div data-detail="${j.id}">${detailCache[j.id]?.html || '<span class="hint">Loading…</span>'}</div>
+    </details>
+  </article>`;
+}
+
+function render() {
+  renderTabs();
+  const f = TABS.find((t) => t[0] === tab)[2];
+  const list = jobs.filter(f);
+  const el = document.getElementById('list');
+  const active = document.activeElement;
+  const focusId = active?.dataset?.draft;
+  const sel = focusId ? [active.selectionStart, active.selectionEnd] : null;
+  el.innerHTML = list.length ? list.map(card).join('') : `<div class="empty">${{ needs: 'Nothing needs you right now.', progress: 'Nothing is running.', ready: 'No ready fixes yet.', all: 'No jobs yet. Assign a Bug to yourself in Jira.' }[tab]}</div>`;
+  if (focusId) {
+    const t = el.querySelector(`textarea[data-draft="${focusId}"]`);
+    if (t) { t.focus(); t.setSelectionRange(sel[0], sel[1]); }
+  }
+}
+
+async function refresh() {
+  try {
+    const [status, list] = await Promise.all([api('/api/status'), api('/api/jobs')]);
+    const svc = document.getElementById('svc');
+    if (status.killed) { svc.className = 'pill s-bad'; svc.textContent = 'Stopped (kill switch)'; }
+    else if (!status.runnerEnabled) { svc.className = 'pill s-warn'; svc.textContent = 'Agent disabled'; }
+    else if (status.runnerBusy) { svc.className = 'pill s-run'; svc.textContent = 'Working'; }
+    else { svc.className = 'pill s-ok'; svc.textContent = 'Idle · watching Jira'; }
+    document.getElementById('banner').innerHTML = status.killed ? '<div class="banner">Kill switch is active. Run <code>ngauto unkill</code> and <code>ngauto start</code> in Terminal to resume.</div>' : '';
+    document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    const json = JSON.stringify(list);
+    if (json !== lastJson) {
+      lastJson = json; jobs = list;
+      const typing = document.activeElement?.dataset?.draft;
+      if (!typing) render(); else renderTabs();
+      for (const id of Object.keys(open)) if (open[id]) loadDetail(Number(id), detailCache[id]?.view || 'history', true);
+    }
+  } catch (e) {
+    const svc = document.getElementById('svc');
+    svc.className = 'pill s-bad'; svc.textContent = 'Service not reachable';
+  }
+}
+
+function diffHtml(d) {
+  if (!d) return '<span class="hint">No code change yet.</span>';
+  return '<pre>' + d.split('\n').map((l) => {
+    const e = esc(l);
+    if (l.startsWith('+') && !l.startsWith('+++')) return `<span class="add">${e}</span>`;
+    if (l.startsWith('-') && !l.startsWith('---')) return `<span class="del">${e}</span>`;
+    if (l.startsWith('@@')) return `<span class="hunk">${e}</span>`;
+    return e;
+  }).join('\n') + '</pre>';
+}
+
+async function loadDetail(id, view, quiet) {
+  detailCache[id] = { ...(detailCache[id] || {}), view };
+  let html;
+  try {
+    if (view === 'diff') {
+      const d = await api(`/api/jobs/${id}/diff`);
+      html = diffHtml(d.diff) + (d.truncated ? '<p class="hint">Diff truncated.</p>' : '');
+    } else {
+      const d = await api(`/api/jobs/${id}`);
+      if (view === 'history') {
+        html = '<table class="hist">' + d.events.slice().reverse().map((e) => `<tr><td>${new Date(e.at).toLocaleString()}</td><td>${esc(e.from_state || '—')} → <b>${esc(e.to_state)}</b>${e.note ? '<br><span class="hint">' + esc(e.note) + '</span>' : ''}</td></tr>`).join('') + '</table>';
+      } else if (view === 'ticket') {
+        html = d.ticket ? `<pre style="white-space:pre-wrap">${esc(d.ticket)}</pre>` : '<span class="hint">Ticket not fetched yet.</span>';
+      } else {
+        html = d.buildTail ? `<pre>${esc(d.buildTail)}</pre>` : '<span class="hint">No build log for this job state.</span>';
+      }
+    }
+  } catch (e) { html = `<span class="hint">Could not load: ${esc(e.message)}</span>`; }
+  detailCache[id].html = html;
+  const box = document.querySelector(`[data-detail="${id}"]`);
+  if (box) box.innerHTML = html;
+  document.querySelectorAll(`[data-view][data-id="${id}"]`).forEach((b) => b.setAttribute('aria-selected', b.dataset.view === view));
+}
+
+document.addEventListener('click', async (ev) => {
+  const t = ev.target.closest('button');
+  if (!t) return;
+  if (t.dataset.tab) { tab = t.dataset.tab; safeSet('tab', tab); render(); return; }
+  if (t.dataset.view) { loadDetail(Number(t.dataset.id), t.dataset.view); return; }
+  const act = t.dataset.act; const id = Number(t.dataset.id);
+  if (!act) return;
+  if (act === 'cancel' && !confirm(`Cancel job #${id}?`)) return;
+  let body = {};
+  if (act === 'answer') {
+    const text = (drafts[id] || '').trim();
+    if (text.length < 3) { toast('Type an answer first.'); return; }
+    body = { text };
+  }
+  t.disabled = true;
+  try {
+    await api(`/api/jobs/${id}/${act}`, body);
+    if (act === 'answer') delete drafts[id];
+    toast({ answer: 'Posted to Jira and re-queued.', retry: 'Re-queued.', cancel: 'Cancelled.' }[act]);
+    lastJson = ''; document.activeElement?.blur(); await refresh();
+  } catch (e) { toast('Failed: ' + e.message); t.disabled = false; }
+});
+document.addEventListener('input', (ev) => { const id = ev.target.dataset?.draft; if (id) drafts[id] = ev.target.value; });
+document.addEventListener('focusout', (ev) => { if (ev.target.dataset?.draft) setTimeout(() => { if (!document.activeElement?.dataset?.draft) render(); }, 200); });
+document.addEventListener('toggle', (ev) => {
+  const id = ev.target.dataset?.details; if (!id) return;
+  open[id] = ev.target.open;
+  if (ev.target.open) loadDetail(Number(id), detailCache[id]?.view || 'history');
+}, true);
+
+refresh();
+setInterval(refresh, 4000);
+setInterval(() => { if (!document.activeElement?.dataset?.draft) document.querySelectorAll('.meta').length && render(); }, 60000);
+</script>
+</body>
+</html>

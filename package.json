@@ -1,0 +1,22 @@
+{
+  "name": "ng-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Jira -> Claude Code -> GitLab Draft MR automation for the NaukriGulf iOS app",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "ngauto": "cli/ngauto.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"tests/**/*.test.js\"",
+    "ngauto": "node --disable-warning=ExperimentalWarning cli/ngauto.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
