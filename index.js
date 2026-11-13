@@ -10,6 +10,10 @@ import { createReconciler } from './jira-integration/reconciler.js';
 import { createAgentRunner } from './agent-runner/runner.js';
 import { createMacNotifier } from './notifications/macos.js';
 import { mountDashboard } from './webhook-listener/dashboard.js';
+import { run } from './agent-runner/exec.js';
+import { createWorkspace } from './agent-runner/workspace.js';
+import { createGitlabClient } from './gitlab-integration/gitlabClient.js';
+import { createPublisher } from './gitlab-integration/publisher.js';
 
 const config = loadConfig();
 const logger = createLogger({ dir: config.paths.logs, level: config.logging.level, stdout: config.logging.stdout });
@@ -49,7 +53,17 @@ if (!config.jira.baseUrl || !config.jira.email || !(await secrets.has('jira-api-
     if (!config.repo.path) {
       logger.warn('config.missing', { key: 'repo.path', effect: 'agent runner disabled' });
     } else {
-      runner = createAgentRunner({ config, jobStore, jira, logger, killSwitch, notify });
+      const workspace = createWorkspace({ run });
+      let publisher = null;
+      if (config.gitlab.autoMr === false) {
+        logger.info('gitlab.mr_disabled', { reason: 'gitlab.autoMr=false' });
+      } else if (!(await secrets.has('gitlab-token'))) {
+        logger.warn('gitlab.mr_disabled', { reason: 'gitlab-token secret missing', effect: 'fixes stop at VALIDATED (no push / Draft MR)' });
+      } else {
+        const gitlab = createGitlabClient({ baseUrl: config.gitlab.baseUrl, projectPath: config.gitlab.projectPath, getToken: () => secrets.get('gitlab-token') });
+        publisher = createPublisher({ config, gitlab, workspace, jira, logger });
+      }
+      runner = createAgentRunner({ config, jobStore, jira, logger, killSwitch, notify, workspace, publisher });
       runner.start();
     }
   }
@@ -57,7 +71,7 @@ if (!config.jira.baseUrl || !config.jira.email || !(await secrets.has('jira-api-
 
 const app = createApp({
   config, logger, secrets, jobStore, killSwitch, reconciler,
-  extraRoutes: (a) => mountDashboard(a, { config, jobStore, jira, killSwitch, runner, logger }),
+  extraRoutes: (a) => mountDashboard(a, { config, jobStore, jira, killSwitch, runner, logger, mrEnabled: Boolean(runner?.publishes) }),
 });
 const server = app.listen(config.server.port, config.server.host, () => {
   logger.info('service.started', { host: config.server.host, port: server.address().port, env: config.env, pid: process.pid, portal: `http://127.0.0.1:${server.address().port}/` });

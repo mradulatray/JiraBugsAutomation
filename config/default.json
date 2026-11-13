@@ -88,8 +88,6 @@
       "generic/platform=iOS Simulator",
       "-derivedDataPath",
       "{derivedData}",
-      "ARCHS=arm64",
-      "ONLY_ACTIVE_ARCH=YES",
       "CODE_SIGNING_ALLOWED=NO",
       "build"
     ]

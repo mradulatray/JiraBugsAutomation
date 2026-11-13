@@ -178,17 +178,23 @@ function card(j) {
     const prev = j.running || j.state === 'QUEUED';
     body += `<div class="box ${prev ? 'p' : 'a'}"><h3>${prev ? 'Previous attempt' : 'What Claude changed'}</h3><p><b>${esc(a.summary)}</b>${a.details ? '\n' + esc(a.details) : ''}</p></div>`;
   }
+  if (j.mrUrl) {
+    body += `<div class="box a"><h3>Merge request</h3><p><a href="${esc(j.mrUrl)}" target="_blank" rel="noopener noreferrer">${esc(j.mrUrl)}</a>\nDraft — review, test, then mark ready and merge in GitLab.</p></div>`;
+  }
+  const extra = (j.canRebuild ? `<button class="btn" data-act="rebuild" data-id="${j.id}" title="Run the Xcode build again on the existing fix (no new Claude run)">Rebuild</button>` : '')
+    + (j.canPublish ? `<button class="btn${j.state === 'VALIDATED' ? ' primary' : ''}" data-act="publish" data-id="${j.id}" title="Push the branch and open/update the Draft MR">${j.mrUrl ? 'Update MR' : 'Create MR'}</button>` : '');
   if (j.canAnswer) {
     const ph = j.state === 'NEEDS_INFO' ? 'Type the answer (steps, screen, device, decision)…' : 'Optional: add instructions or more details for Claude…';
     body += `<textarea data-draft="${j.id}" placeholder="${ph}" aria-label="Answer for ${esc(j.key)}">${esc(drafts[j.id] || '')}</textarea>
       <div class="actions">
         <button class="btn primary" data-act="answer" data-id="${j.id}">Send to Jira &amp; retry</button>
-        <button class="btn" data-act="retry" data-id="${j.id}">Retry without comment</button>
+        <button class="btn" data-act="retry" data-id="${j.id}" title="Start over: new copy of the code and a new Claude run">Retry from scratch</button>
+        ${extra}
         ${j.canCancel ? `<button class="btn danger" data-act="cancel" data-id="${j.id}">Cancel</button>` : ''}
         <span class="hint">Your text is posted as a Jira comment; Claude re-reads the ticket.</span>
       </div>`;
-  } else if (j.canCancel) {
-    body += `<div class="actions"><button class="btn danger" data-act="cancel" data-id="${j.id}">Cancel</button></div>`;
+  } else if (j.canCancel || extra) {
+    body += `<div class="actions">${extra}${j.canCancel ? `<button class="btn danger" data-act="cancel" data-id="${j.id}">Cancel</button>` : ''}</div>`;
   }
   return `<article class="card" data-card="${j.id}">
     <div class="top">
@@ -235,6 +241,7 @@ async function refresh() {
     else if (!status.runnerEnabled) { svc.className = 'pill s-warn'; svc.textContent = 'Agent disabled'; }
     else if (status.runnerBusy) { svc.className = 'pill s-run'; svc.textContent = 'Working'; }
     else { svc.className = 'pill s-ok'; svc.textContent = 'Idle · watching Jira'; }
+    if (!status.mrEnabled && status.runnerEnabled) svc.textContent += ' · MRs off (no GitLab token)';
     document.getElementById('banner').innerHTML = status.killed ? '<div class="banner">Kill switch is active. Run <code>ngauto unkill</code> and <code>ngauto start</code> in Terminal to resume.</div>' : '';
     document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
     const json = JSON.stringify(list);
@@ -303,7 +310,7 @@ document.addEventListener('click', async (ev) => {
   try {
     await api(`/api/jobs/${id}/${act}`, body);
     if (act === 'answer') delete drafts[id];
-    toast({ answer: 'Posted to Jira and re-queued.', retry: 'Re-queued.', cancel: 'Cancelled.' }[act]);
+    toast({ answer: 'Posted to Jira and re-queued.', retry: 'Re-queued (fresh start).', rebuild: 'Re-queued: rebuild only.', publish: 'Re-queued: push + Draft MR.', cancel: 'Cancelled.' }[act]);
     lastJson = ''; document.activeElement?.blur(); await refresh();
   } catch (e) { toast('Failed: ' + e.message); t.disabled = false; }
 });

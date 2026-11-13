@@ -12,7 +12,7 @@ Lives outside the iOS repo on purpose: the agent never sees or edits its own gua
 | 3 | HMAC verification, Jira event filter, dedupe, SQLite job queue | ✅ done |
 | 4 | Jira REST fetch, TICKET.md builder, reconciler (polling) | ✅ done |
 | 5 | Agent runner: worktree, headless Claude fix, commit, xcodebuild check, macOS notifications | ✅ done |
-| 6 | Push branch + GitLab Draft MR (VALIDATED → MR_DRAFT) | next |
+| 6 | Push branch + GitLab Draft MR (VALIDATED → PUSHING → MR_DRAFT); needs `gitlab-token` | ✅ done |
 | 7–10 | Jira comment, Jenkins beta1 build, E2E | pending |
 
 Jobs are enqueued (state `QUEUED`) by the webhook **or** the poller. The agent runner (in the same
@@ -23,7 +23,8 @@ QUEUED → FETCHING   TICKET.md + git worktree ~/.ngauto/workspaces/<KEY>/repo o
        → ANALYZING  claude -p in the worktree (no Bash/web/MCP; edits only; $agent.maxBudgetUsd cap)
        → IMPLEMENTING  forbidden-path check (fastlane, Pods, Jenkinsfile, signing…), local commit
        → VALIDATING xcodebuild NaukriGulf_Debug (simulator); on errors Claude retries ≤ agent.maxFixAttempts
-       → VALIDATED  compiled, committed locally — nothing is pushed yet (Phase 6)
+       → VALIDATED  compiled, committed locally
+       → PUSHING → MR_DRAFT  push bugfix/* branch + open a Draft MR into release (only with gitlab-token)
 exits: NEEDS_INFO (agent's question in `ngauto show`), VALIDATION_FAILED, FAILED, INTERRUPTED
 ```
 
@@ -103,6 +104,8 @@ ngauto kill [reason]          EMERGENCY STOP (blocks webhooks, stops listener, h
 ngauto unkill
 ngauto jobs [limit]
 ngauto show <id> | retry <id> | cancel <id>
+ngauto rebuild <id>          Xcode build again on the existing fix (no Claude run)
+ngauto publish <id>          push + open/update the Draft MR
 ngauto secret set <jira-webhook-secret|jira-api-token|gitlab-token>
 ngauto sign <payload.json>    HMAC for local curl tests
 ngauto poll [--dry-run]       one poll now (dry run shows what would be enqueued)

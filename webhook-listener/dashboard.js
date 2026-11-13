@@ -15,7 +15,10 @@ const execFileAsync = promisify(execFile);
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const PAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dashboard', 'index.html');
 const RETRYABLE = ['NEEDS_INFO', 'FAILED', 'VALIDATION_FAILED', 'INTERRUPTED', 'VALIDATED'];
-const CANCELLABLE = ['QUEUED', 'NEEDS_INFO', 'FAILED', 'VALIDATION_FAILED', 'INTERRUPTED', 'VALIDATED'];
+const CANCELLABLE = ['QUEUED', 'NEEDS_INFO', 'FAILED', 'VALIDATION_FAILED', 'INTERRUPTED', 'VALIDATED', 'MR_DRAFT'];
+// rebuild/publish reuse the existing fix (no Claude run); need a branch with commits in the worktree
+const REBUILDABLE = ['VALIDATION_FAILED', 'FAILED', 'INTERRUPTED', 'VALIDATED', 'MR_DRAFT'];
+const PUBLISHABLE = ['VALIDATED', 'FAILED', 'MR_DRAFT'];
 
 function latestFile(dir, prefix) {
   if (!existsSync(dir)) return null;
@@ -29,7 +32,7 @@ function tail(file, maxBytes) {
   return buf.subarray(Math.max(0, buf.length - maxBytes)).toString('utf8');
 }
 
-export function mountDashboard(app, { config, jobStore, jira, killSwitch, runner, logger }) {
+export function mountDashboard(app, { config, jobStore, jira, killSwitch, runner, logger, mrEnabled = false }) {
   const proxyHeader = config.server.trustProxyHeader;
   const base = config.gitlab.defaultTargetBranch;
   const wsDir = (key) => path.join(config.paths.workspaces, key);
@@ -81,6 +84,9 @@ export function mountDashboard(app, { config, jobStore, jira, killSwitch, runner
       canCancel: CANCELLABLE.includes(job.state),
       canAnswer: RETRYABLE.includes(job.state) && Boolean(jira),
     };
+    const hasFix = Boolean(job.branch) && existsSync(path.join(wsDir(job.issue_key), 'repo'));
+    v.canRebuild = hasFix && REBUILDABLE.includes(job.state);
+    v.canPublish = hasFix && mrEnabled && PUBLISHABLE.includes(job.state);
     const ticket = path.join(wsDir(job.issue_key), 'TICKET.md');
     if (existsSync(ticket)) v.title = /^## Summary\n+(.+)$/m.exec(readFileSync(ticket, 'utf8'))?.[1]?.slice(0, 200) ?? null;
     v.agent = agentResult(job.issue_key);
@@ -95,7 +101,7 @@ export function mountDashboard(app, { config, jobStore, jira, killSwitch, runner
   }
 
   r.get('/api/status', (req, res) => {
-    res.json({ killed: killSwitch.isActive(), runnerBusy: runner?.isBusy() ?? false, runnerEnabled: Boolean(runner), counts: jobStore.countByState(), now: new Date().toISOString() });
+    res.json({ killed: killSwitch.isActive(), runnerBusy: runner?.isBusy() ?? false, runnerEnabled: Boolean(runner), mrEnabled, counts: jobStore.countByState(), now: new Date().toISOString() });
   });
 
   r.get('/api/jobs', (req, res) => res.json(jobStore.listJobs(100).map((j) => view(j))));
@@ -128,6 +134,17 @@ export function mountDashboard(app, { config, jobStore, jira, killSwitch, runner
     logger.info('portal.retry', { jobId: job.id, issueKey: job.issue_key });
     res.json(view(j));
   }));
+
+  for (const mode of ['rebuild', 'publish']) {
+    r.post(`/api/jobs/:id/${mode}`, withJob((job, req, res) => {
+      const v = view(job);
+      if (!(mode === 'rebuild' ? v.canRebuild : v.canPublish)) throw new Error(`Cannot ${mode} a job in state ${job.state}${mode === 'publish' && !mrEnabled ? ' (GitLab token missing)' : ''}`);
+      // The runner reads this note to skip Claude and reuse the existing commit(s).
+      const j = jobStore.transition(job.id, 'QUEUED', { note: mode, patch: { error: null } });
+      logger.info(`portal.${mode}`, { jobId: job.id, issueKey: job.issue_key });
+      res.json(view(j));
+    }));
+  }
 
   r.post('/api/jobs/:id/cancel', withJob((job, req, res) => {
     const j = jobStore.transition(job.id, 'CANCELLED', { note: 'cancelled via portal' });

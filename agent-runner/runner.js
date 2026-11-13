@@ -2,8 +2,10 @@
 //   QUEUED → FETCHING (TICKET.md + worktree) → ANALYZING (Claude) → IMPLEMENTING (commit)
 //          → VALIDATING (xcodebuild; up to maxFixAttempts Claude retries on compile errors) → VALIDATED
 // Exits: NEEDS_INFO (agent asked a question / changed nothing), VALIDATION_FAILED, FAILED, INTERRUPTED.
-// Nothing here pushes or talks to GitLab (that is Phase 6, VALIDATED → PUSHING).
-import { readFileSync } from 'node:fs';
+// Phase 6 (optional `publisher`): VALIDATED → PUSHING → MR_DRAFT (push branch + GitLab Draft MR).
+// Re-queue modes (note on the QUEUED event): 'rebuild' = reuse the existing fix, only compile (+ publish);
+// 'publish' = only push + MR. Both skip Claude and keep the existing commit(s).
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { childEnv, run as defaultRun } from './exec.js';
 import { createWorkspace } from './workspace.js';
@@ -11,10 +13,19 @@ import { claudeArgs, initialPrompt, parseClaudeOutput, retryPrompt } from './cla
 import { writeTicket } from '../jira-integration/ticketBuilder.js';
 import { TRANSIENT_STATES } from '../queue/stateMachine.js';
 
+export const REQUEUE_MODES = ['rebuild', 'publish'];
+
+/** Compiler errors in the app's own sources (not Pods / build scripts). */
+export function codeErrors(log) {
+  return [...new Set(String(log).split('\n').filter((l) => /\.(swift|mm?|h|c|cpp|storyboard|xib|xcassets|strings|plist):\d+(:\d+)?: (fatal )?error:/.test(l) && !/\/Pods\//.test(l)))];
+}
+
 export function buildLogTail(log, maxLines = 80) {
   const lines = String(log).split('\n');
-  const errors = lines.filter((l) => /\berror:|\*\* BUILD FAILED \*\*|fatal error/i.test(l));
-  const picked = errors.length ? [...new Set(errors)].slice(0, 60) : lines.slice(-maxLines);
+  const errors = codeErrors(log);
+  if (errors.length) return errors.slice(0, 60).join('\n').slice(0, 12_000);
+  const failedAt = lines.findIndex((l) => l.includes('The following build commands failed'));
+  const picked = failedAt >= 0 ? lines.slice(Math.max(0, failedAt - 15), failedAt + 10) : lines.slice(-maxLines);
   return picked.join('\n').slice(0, 12_000);
 }
 
@@ -25,6 +36,7 @@ export function createAgentRunner({
   logger,
   killSwitch,
   notify = () => {},
+  publisher = null, // { publish({ job, worktree, branch }) => { mrUrl } } — Phase 6
   run = defaultRun,
   workspace = createWorkspace({ run }),
   setTimer = setInterval,
@@ -67,9 +79,17 @@ export function createAgentRunner({
     const derivedData = path.join(config.paths.home, 'DerivedData');
     const [cmd, ...args] = v.command.map((a) => a.replaceAll('{derivedData}', derivedData));
     const logFile = path.join(workspaceDir, `build-${n}.log`);
-    const r = await run(cmd, args, { cwd: path.join(worktree, appSubdir), signal, timeoutMs: v.timeoutMin * 60_000, logFile });
+    rmSync(logFile, { force: true }); // one log per build (a rebuild must not append to an old failure)
+    // Build in a fixed directory (incremental) unless disabled; falls back to the issue worktree.
+    let srcRoot = worktree;
+    if (v.sharedBuildTree !== false && workspace.syncBuildTree) {
+      srcRoot = path.join(config.paths.home, 'buildtree');
+      await workspace.syncBuildTree({ repoPath: config.repo.path, buildDir: srcRoot, worktree, signal });
+    }
+    const r = await run(cmd, args, { cwd: path.join(srcRoot, appSubdir), signal, timeoutMs: v.timeoutMin * 60_000, logFile });
     if (r.aborted) throw Object.assign(new Error('aborted'), { aborted: true });
-    return { ok: r.code === 0 && !r.timedOut, timedOut: r.timedOut, tail: buildLogTail(`${r.stdout}\n${r.stderr}`), logFile };
+    const out = `${r.stdout}\n${r.stderr}`.replaceAll(`${srcRoot}/`, '');
+    return { ok: r.code === 0 && !r.timedOut, timedOut: r.timedOut, codeErrors: codeErrors(out).length, tail: buildLogTail(out), logFile };
   }
 
   /** Validate the agent's working-tree changes and commit them. Returns { ok, reason }. */
@@ -86,6 +106,21 @@ export function createAgentRunner({
   async function processJob(queued, signal) {
     const key = queued.issue_key;
     const workspaceDir = path.join(config.paths.workspaces, key);
+    const worktreeDir = path.join(workspaceDir, 'repo');
+    const mode = REQUEUE_MODES.find((m) => jobStore.jobEvents(queued.id).at(-1)?.note === m);
+    if (mode) {
+      if (!queued.branch || !existsSync(worktreeDir) || !(await workspace.hasCommits(worktreeDir, base))) {
+        return fail(step(queued, 'FETCHING', { note: mode }), `cannot ${mode}: no existing fix for this job (use retry instead)`);
+      }
+      let job = step(queued, 'FETCHING', { note: `${mode}: reusing existing fix on ${queued.branch}` });
+      job = step(job, 'ANALYZING', { note: 'skipped' });
+      job = step(job, 'IMPLEMENTING', { note: 'skipped' });
+      if (mode === 'publish') {
+        job = step(job, 'VALIDATING', { note: 'skipped (publish only)' });
+        return publish(job, queued.branch, worktreeDir);
+      }
+      return validate(step(job, 'VALIDATING'), { key, branch: queued.branch, worktree: worktreeDir, workspaceDir, signal, sessionId: null });
+    }
     let job = step(queued, 'FETCHING');
 
     const ticketFile = await writeTicket({ jira, config, issueKey: key });
@@ -108,15 +143,29 @@ export function createAgentRunner({
       return done(job, branch, worktree);
     }
 
-    let sessionId = res.sessionId;
     job = step(job, 'VALIDATING');
+    return validate(job, { key, branch, worktree, workspaceDir, signal, sessionId: res.sessionId });
+  }
+
+  async function validate(job, { key, branch, worktree, workspaceDir, signal, sessionId }) {
     for (let attempt = 1; ; attempt++) {
       const b = await compile({ worktree, workspaceDir, n: attempt, signal });
       if (b.ok) return done(job, branch, worktree);
-      logger.warn('job.compile_failed', { jobId: job.id, issueKey: key, attempt, timedOut: b.timedOut, log: b.logFile });
-      if (b.timedOut || attempt > agent.maxFixAttempts) {
-        step(job, 'VALIDATION_FAILED', { patch: { error: `compile failed after ${attempt} attempt(s); see ${b.logFile}` } });
-        notify(`${key}: build failed`, 'Compile check failed. Run `ngauto show` for details.');
+      logger.warn('job.compile_failed', { jobId: job.id, issueKey: key, attempt, timedOut: b.timedOut, codeErrors: b.codeErrors, log: b.logFile });
+      if (b.timedOut) {
+        step(job, 'VALIDATION_FAILED', { patch: { error: `Xcode build timed out after ${config.validate.timeoutMin} min (not a code error). Use Rebuild. Log: ${b.logFile}` } });
+        notify(`${key}: build timed out`, 'Use Rebuild in the portal.');
+        return;
+      }
+      if (!b.codeErrors) {
+        // Nothing in the app's sources failed: build setup / Pods script / environment. Don't ask Claude to "fix" it.
+        step(job, 'VALIDATION_FAILED', { patch: { error: `Build failed for a non-code reason (build setup/environment, no compile errors in app sources). Fix the setup, then Rebuild. Log: ${b.logFile}` } });
+        notify(`${key}: build failed (setup)`, 'Not a code error; see the build log.');
+        return;
+      }
+      if (attempt > agent.maxFixAttempts || !sessionId) {
+        step(job, 'VALIDATION_FAILED', { patch: { error: `${b.codeErrors} compile error(s) remain after ${attempt} build(s). Log: ${b.logFile}` } });
+        notify(`${key}: build failed`, 'Compile errors remain; see the build log.');
         return;
       }
       const r = await runClaude({ job, cwd: worktree, prompt: retryPrompt({ buildLogTail: b.tail, attempt }), resumeSessionId: sessionId, n: attempt + 1, workspaceDir, signal });
@@ -146,8 +195,24 @@ export function createAgentRunner({
     try {
       stat = (await workspace.diffStat(worktree, base)).trim().split('\n').at(-1) ?? '';
     } catch {}
-    step(job, 'VALIDATED', { note: stat || null, patch: { error: null } });
-    notify(`${job.issue_key}: fix ready`, `Compiled OK on ${branch}. ${stat}`);
+    job = step(job, 'VALIDATED', { note: stat || null, patch: { error: null } });
+    if (!publisher) {
+      notify(`${job.issue_key}: fix ready`, `Compiled OK on ${branch}. ${stat}`);
+      return;
+    }
+    return publish(job, branch, worktree);
+  }
+
+  async function publish(job, branch, worktree) {
+    job = step(job, 'PUSHING', { note: branch });
+    try {
+      const { mrUrl, created } = await publisher.publish({ job, worktree, branch });
+      step(job, 'MR_DRAFT', { note: created ? 'Draft MR created' : 'Draft MR updated', patch: { mr_url: mrUrl, error: null } });
+      notify(`${job.issue_key}: Draft MR ready`, mrUrl);
+    } catch (err) {
+      if (err?.aborted) throw err;
+      fail(job, `push/MR failed: ${String(err?.message ?? err)}. Fix it, then use "Create MR".`);
+    }
   }
 
   async function tick() {
@@ -195,6 +260,7 @@ export function createAgentRunner({
 
   return {
     tick,
+    publishes: Boolean(publisher),
     isBusy: () => busy,
     start() {
       if (!stopped) return;

@@ -199,6 +199,17 @@ function retry(id) {
   });
 }
 
+function requeueMode(id, mode) {
+  const n = jobArg(id);
+  if (!n) return fail(`Usage: ngauto ${mode} <jobId>`);
+  withStore((store) => {
+    const j = store.getJob(n);
+    if (!j?.branch || !existsSync(path.join(config.paths.workspaces, j.issue_key, 'repo'))) return fail(`Job #${n} has no existing fix; use retry.`);
+    store.transition(n, 'QUEUED', { note: mode, patch: { error: null } });
+    console.log(`Job #${n} (${j.issue_key}) re-queued for ${mode === 'rebuild' ? 'Xcode build only (reusing the fix)' : 'push + Draft MR'}.`);
+  });
+}
+
 function cancel(id) {
   const n = jobArg(id);
   if (!n) return fail('Usage: ngauto cancel <jobId>');
@@ -320,6 +331,8 @@ const HELP = `ngauto <command>
   jobs [limit]             list recent jobs
   show <jobId>             job details, history and workspace paths
   retry <jobId>            re-queue a NEEDS_INFO/FAILED/VALIDATION_FAILED/INTERRUPTED/VALIDATED job
+  rebuild <jobId>          re-run only the Xcode build on the existing fix (no new Claude run)
+  publish <jobId>          push the branch + open/update the Draft MR (needs gitlab-token)
   cancel <jobId>           cancel a job (to stop a RUNNING job use \`ngauto kill\`)
   secret set <name>        store a secret in Keychain (${SECRET_NAMES.join(', ')})
   secret generate jira-webhook-secret   create + store a random webhook secret, shown once
@@ -342,6 +355,8 @@ const commands = {
   show: () => show(args[0]),
   retry: () => retry(args[0]),
   cancel: () => cancel(args[0]),
+  rebuild: () => requeueMode(args[0], 'rebuild'),
+  publish: () => requeueMode(args[0], 'publish'),
   secret: () => (args[0] === 'set' ? secretSet(args[1]) : args[0] === 'generate' ? secretGenerate(args[1]) : fail('Usage: ngauto secret set|generate <name>')),
   tunnel: () => (args[0] === 'install' ? tunnelInstall() : args[0] === 'uninstall' ? tunnelUninstall() : fail('Usage: ngauto tunnel install|uninstall')),
   sign: () => sign(args[0]),

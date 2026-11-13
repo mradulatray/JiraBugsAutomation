@@ -92,5 +92,47 @@ export function createWorkspace({ run, git = 'git' }) {
     return sh(worktree, ['diff', '--stat', `origin/${base}...HEAD`]);
   }
 
-  return { prepare, changedFiles, checkAllowed, commitAll, diffStat };
+  async function hasCommits(worktree, base) {
+    try {
+      return Number((await sh(worktree, ['rev-list', '--count', `origin/${base}..HEAD`])).trim()) > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Commit messages on the branch, oldest first. */
+  async function commitMessages(worktree, base) {
+    const out = await sh(worktree, ['log', '--reverse', '--format=%B%x00', `origin/${base}..HEAD`]);
+    return out.split('\0').map((m) => m.trim()).filter(Boolean);
+  }
+
+  /**
+   * Push the issue branch. Only automation-owned branches (bugfix/…) and never a protected one;
+   * --force-with-lease because a retry recreates the branch from origin/<base>.
+   */
+  async function push(worktree, branch, { protectedBranches = [], signal } = {}) {
+    if (!/^bugfix\/[A-Z][A-Z0-9_]+-\d+(-[a-z0-9-]+)?$/.test(branch) || protectedBranches.includes(branch)) {
+      throw new Error(`refusing to push branch "${branch}"`);
+    }
+    await sh(worktree, ['push', '--no-verify', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`], { signal, timeoutMs: 10 * 60_000 });
+  }
+
+  /**
+   * One fixed build directory for every job: check out the job's HEAD there (detached) so Xcode
+   * sees the same source paths each time and only recompiles what changed. git leaves unchanged
+   * files untouched (mtimes kept), which is what makes the incremental build work.
+   */
+  async function syncBuildTree({ repoPath, buildDir, worktree, signal }) {
+    const sha = (await sh(worktree, ['rev-parse', 'HEAD'])).trim();
+    if (!existsSync(path.join(buildDir, '.git'))) {
+      await sh(repoPath, ['worktree', 'prune'], { signal });
+      await sh(repoPath, ['worktree', 'add', '--detach', buildDir, sha], { signal, timeoutMs: 15 * 60_000 });
+    } else {
+      await sh(buildDir, ['checkout', '--force', '--detach', sha], { signal, timeoutMs: 10 * 60_000 });
+      await sh(buildDir, ['clean', '-fdq'], { signal });
+    }
+    return sha;
+  }
+
+  return { prepare, changedFiles, checkAllowed, commitAll, diffStat, hasCommits, commitMessages, push, syncBuildTree };
 }
