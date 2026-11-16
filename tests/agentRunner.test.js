@@ -300,6 +300,24 @@ test('workspace.push refuses non-bugfix and protected branches', async () => {
   await assert.rejects(ws.push('/x', 'feature/foo'), /refusing/);
   await assert.rejects(ws.push('/x', 'bugfix/NGBUGS-1-x;rm -rf'), /refusing/);
   await ws.push('/x', 'bugfix/NGBUGS-1-fix-a', { protectedBranches: ['release'] });
+  await assert.rejects(ws.push('/x', 'bugfix/NGBUGS-1-a', { token: 't', remoteUrl: 'https://u:p@gl/x.git' }), /https URL without credentials/);
+});
+
+test('workspace.push with token: header via env (not argv/URL), lease = current remote sha', async () => {
+  const calls = [];
+  const fakeRun = async (cmd, args, opts) => {
+    calls.push({ args, env: opts.env });
+    return { code: 0, stdout: args[0] === 'ls-remote' ? 'abc123\trefs/heads/bugfix/NGBUGS-1-a\n' : '', stderr: '' };
+  };
+  const ws = createWorkspace({ run: fakeRun });
+  await ws.push('/x', 'bugfix/NGBUGS-1-a', { token: 'glpat-SECRET', remoteUrl: 'https://gl.example/g/p.git' });
+  const push = calls.find((c) => c.args[0] === 'push');
+  assert.ok(push.args.includes('--force-with-lease=refs/heads/bugfix/NGBUGS-1-a:abc123'));
+  assert.ok(push.args.includes('https://gl.example/g/p.git'));
+  assert.ok(!push.args.join(' ').includes('SECRET'));
+  assert.equal(push.env.GIT_CONFIG_VALUE_0, `Authorization: Basic ${Buffer.from('oauth2:glpat-SECRET').toString('base64')}`);
+  assert.equal(push.env.GIT_CONFIG_KEY_1, 'credential.helper');
+  assert.equal(push.env.GIT_TERMINAL_PROMPT, '0');
 });
 
 test('publisher: Draft title, description from commits, reuses an open MR', async () => {

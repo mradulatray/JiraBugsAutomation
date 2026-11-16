@@ -2,6 +2,7 @@
 // <workspaces>/<KEY>/repo  -> worktree on bugfix/<KEY>-<slug>, based on origin/<base>
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { childEnv } from './exec.js';
 
 export function slugify(text, max = 40) {
   const s = String(text ?? '')
@@ -38,7 +39,7 @@ export const DEFAULT_FORBIDDEN = [
 
 export function createWorkspace({ run, git = 'git' }) {
   async function sh(cwd, args, opts = {}) {
-    const r = await run(git, args, { cwd, timeoutMs: opts.timeoutMs ?? 5 * 60_000, signal: opts.signal });
+    const r = await run(git, args, { cwd, timeoutMs: opts.timeoutMs ?? 5 * 60_000, signal: opts.signal, ...(opts.env ? { env: opts.env } : {}) });
     if (r.aborted) throw Object.assign(new Error('aborted'), { aborted: true });
     if (r.code !== 0) {
       const msg = (r.stderr || r.stdout).trim().split('\n').slice(-3).join(' | ');
@@ -107,14 +108,34 @@ export function createWorkspace({ run, git = 'git' }) {
   }
 
   /**
-   * Push the issue branch. Only automation-owned branches (bugfix/…) and never a protected one;
-   * --force-with-lease because a retry recreates the branch from origin/<base>.
+   * Push the issue branch. Only automation-owned branches (bugfix/…) and never a protected one.
+   * With { remoteUrl, token }: push over HTTPS using the GitLab token as an Authorization header
+   * passed via GIT_CONFIG_* env (never in argv or the URL); the saved credential helper is bypassed.
+   * Lease = the remote sha we just read, so a commit pushed by someone else in between is never lost;
+   * a retry (branch recreated from origin/<base>) intentionally replaces the automation's own branch.
    */
-  async function push(worktree, branch, { protectedBranches = [], signal } = {}) {
+  async function push(worktree, branch, { protectedBranches = [], signal, remoteUrl, token } = {}) {
     if (!/^bugfix\/[A-Z][A-Z0-9_]+-\d+(-[a-z0-9-]+)?$/.test(branch) || protectedBranches.includes(branch)) {
       throw new Error(`refusing to push branch "${branch}"`);
     }
-    await sh(worktree, ['push', '--no-verify', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`], { signal, timeoutMs: 10 * 60_000 });
+    const ref = `refs/heads/${branch}`;
+    let target = 'origin';
+    let env;
+    if (token) {
+      if (!/^https:\/\/[^@\s]+$/.test(remoteUrl ?? '')) throw new Error('push remoteUrl must be an https URL without credentials');
+      target = remoteUrl;
+      env = childEnv({
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_CONFIG_COUNT: '2',
+        GIT_CONFIG_KEY_0: 'http.extraHeader',
+        GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`oauth2:${token}`).toString('base64')}`,
+        GIT_CONFIG_KEY_1: 'credential.helper',
+        GIT_CONFIG_VALUE_1: '',
+      });
+    }
+    const remoteSha = ((await sh(worktree, ['ls-remote', target, ref], { signal, env, timeoutMs: 2 * 60_000 })).split(/\s/)[0] ?? '').trim();
+    await sh(worktree, ['push', '--no-verify', `--force-with-lease=${ref}:${remoteSha}`, target, `HEAD:${ref}`], { signal, env, timeoutMs: 10 * 60_000 });
+    return remoteSha || null;
   }
 
   /**

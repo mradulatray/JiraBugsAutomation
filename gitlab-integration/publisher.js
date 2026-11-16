@@ -32,12 +32,13 @@ export function mrDescription({ issueKey, jiraUrl, messages, diffStat, buildCmd 
   ].filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 }
 
-export function createPublisher({ config, gitlab, workspace, jira, logger }) {
+export function createPublisher({ config, gitlab, workspace, jira, logger, getToken = null }) {
+  const remoteUrl = getToken ? `${config.gitlab.baseUrl.replace(/\/+$/, '')}/${config.gitlab.projectPath}.git` : null;
   const target = config.gitlab.defaultTargetBranch;
   return {
     async publish({ job, worktree, branch }) {
       if (job.target_branch && job.target_branch !== target) throw new Error(`job targets ${job.target_branch}, config targets ${target}`);
-      await workspace.push(worktree, branch, { protectedBranches: config.gitlab.protectedBranches });
+      await workspace.push(worktree, branch, { protectedBranches: config.gitlab.protectedBranches, ...(getToken ? { remoteUrl, token: await getToken() } : {}) });
       logger.info('job.pushed', { jobId: job.id, issueKey: job.issue_key, branch });
 
       const messages = await workspace.commitMessages(worktree, target);

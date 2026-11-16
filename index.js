@@ -61,7 +61,7 @@ if (!config.jira.baseUrl || !config.jira.email || !(await secrets.has('jira-api-
         logger.warn('gitlab.mr_disabled', { reason: 'gitlab-token secret missing', effect: 'fixes stop at VALIDATED (no push / Draft MR)' });
       } else {
         const gitlab = createGitlabClient({ baseUrl: config.gitlab.baseUrl, projectPath: config.gitlab.projectPath, getToken: () => secrets.get('gitlab-token') });
-        publisher = createPublisher({ config, gitlab, workspace, jira, logger });
+        publisher = createPublisher({ config, gitlab, workspace, jira, logger, getToken: () => secrets.get('gitlab-token') });
       }
       runner = createAgentRunner({ config, jobStore, jira, logger, killSwitch, notify, workspace, publisher });
       runner.start();
